@@ -1,0 +1,717 @@
+---
+title: "LandfillShrubs.qmd"
+format: html
+editor: visual
+---
+
+## Import Data
+
+### Import library
+
+```{r}
+library(readr)
+library(assertthat)
+library(tidyverse)
+library(lmerTest)
+library(lme4)
+```
+
+```{r}
+data.march <- read.csv("./Landfill_shrub_March_data.csv")
+data.april <- read.csv("./Landfill_shrub_data.csv")
+
+# drop rows without a date, since there are lots of rows with empty strings
+data.march[data.march==''] = NA
+data.march = data.march |> filter(!is.na(Date))
+data.april[data.april==''] = NA
+data.april = data.april |> filter(!is.na(Date))
+
+## Drop first row, since it is descriptive
+data.april = data.april[2: nrow(data.april),]
+
+# Create shrub ids
+data.april$shrub_id <- paste(data.april$Site, data.april$Shrub_location, sep='-')
+data.march$shrub_id <- paste(data.march$Site, data.march$Shrub_location, sep='-')
+```
+
+All Plant IDs
+
+-   There are some plants only from march, but every april plant was also in march
+
+```{r}
+assert_that(sum(!(data.april$shrub_id %in% data.march$shrub_id)) == 0,
+            msg = "All april shrubs should be present in march data")
+```
+
+## Tidy format
+
+```{r}
+data = bind_rows(
+  data.march |> 
+    rename(
+      Height_cm = Height_cm_1,
+      Plant_status = Plant_status_1
+      ) |> 
+    mutate(
+      Shrub_location = as.numeric(Shrub_location),
+      Date = mdy(Date)
+      ),
+  data.april |> 
+    rename(
+      Height_cm = Height_cm_2,
+      Plant_status = Plant_status_2
+      ) |> 
+    mutate(
+      Shrub_location = as.numeric(Shrub_location),
+      Height_cm = as.numeric(Height_cm),
+      Date = mdy('4/30/2024')
+      ))
+```
+
+## Validation
+
+We would expect that:
+
+-   Plants with same shrub_id have same species
+
+    ```{r}
+    # Resolution
+
+    mismatching_species = data |> 
+      select(c(shrub_id, Species, Date, Plant_status, Notes)) |> 
+      pivot_wider(names_from = Date, values_from = c(Species, Plant_status, Notes)) |> 
+      filter(`Species_2024-03-01` != `Species_2024-04-30`)
+
+    # For the one that was first alive and is now dead, use the species from when it was alive
+    data[data$shrub_id == "LF5S-14" & data$Date == "2024-04-30", "Species"] = 'ARTCAL'
+
+    mismatching_species = data |> 
+      select(c(shrub_id, Species, Date, Plant_status, Notes)) |> 
+      pivot_wider(names_from = Date, values_from = c(Species, Plant_status, Notes)) |> 
+      filter(`Species_2024-03-01` != `Species_2024-04-30`)
+
+    # Filter the rest out
+    data = data |> 
+      filter(!(shrub_id %in% mismatching_species$shrub_id))
+
+    mismatching_species = data |> 
+      select(c(shrub_id, Species, Date, Plant_status, Notes)) |> 
+      pivot_wider(names_from = Date, values_from = c(Species, Plant_status, Notes)) |> 
+      filter(`Species_2024-03-01` != `Species_2024-04-30`)
+
+
+    assert_that(
+      nrow(mismatching_species) == 0,
+      msg = "Should be no mismatching species"
+    )
+
+    # (`[[`)("colname")),
+    ```
+
+-   Plants would not be dead in march and alive in april
+
+    ```{r}
+    undead_shrubs = data |> 
+      select(c(shrub_id, Date, Plant_status)) |> 
+      pivot_wider(names_from = Date, values_from = Plant_status) |> 
+      filter(`2024-03-01` == 'Dead') |> 
+      filter(`2024-04-30` == 'Alive')
+
+    assert_that(
+      nrow(undead_shrubs) == 0,
+      msg = "Should be no vampire shrubs that came back from the dead"
+    )
+    ```
+
+-   Plants that have missing species in April are the same as in March
+
+    ```{r}
+    data = data |> 
+      select(c(shrub_id, Date, Species)) |> 
+      pivot_wider(
+        values_from = Species,
+        names_from = Date
+      ) |> 
+      mutate(
+        Species = `2024-03-01`
+      ) |> 
+      select(-c(`2024-03-01`, `2024-04-30`)) |> 
+      left_join(data |> select(-c(Species)), join_by(shrub_id))
+    ```
+
+-   Plants that have missing status data and were dead in march are still dead
+
+    ```{r}
+    data = data |> 
+      select(c(shrub_id, Date, Plant_status)) |> 
+      pivot_wider(values_from = Plant_status, names_from = Date) |> 
+      mutate(
+        `2024-04-30` = case_when(
+          `2024-03-01` == "Dead" & is.na(`2024-04-30`) ~ "Dead",
+          .default = `2024-04-30`
+          ) 
+        ) |>    
+      pivot_longer(!shrub_id, names_to = "Date",  values_to = "Plant_status") |> 
+      mutate(
+        Date = ymd(Date)
+      ) |> 
+      right_join(
+        data |> select(-c(Plant_status)), 
+        by=join_by(Date, shrub_id))
+
+    ```
+
+## Cleaning
+
+1.  Get rid of unnecessary columns
+
+    ```{r}
+    measurements = data |> select(-c(Team, Chlorophyll_Team)) |> mutate(
+        Month = case_when(
+          month(Date) == 3 ~ "March",
+          month(Date) == 4 ~ "April")) |> mutate(
+      Site_numeric_id = 
+        as.numeric(factor(Site, levels=unique(Site)))
+    )
+
+    shrubs = measurements |> 
+      pivot_wider(
+        id_cols = c(shrub_id),
+        names_from = c(Date),
+        values_from = c(
+          Height_cm, 
+          Plant_status, 
+          Notes,
+          Leaf1_Chlorophyll, 
+          Leaf2_Chlorophyll, 
+          Leaf3_Chlorophyll, 
+          Chlorophyll_Team_Notes,
+          Month
+          ),
+        unused_fn = unique
+    ) |> select(-c(
+      `Leaf1_Chlorophyll_2024-03-01`, 
+      `Leaf2_Chlorophyll_2024-03-01`, 
+      `Leaf3_Chlorophyll_2024-03-01`, 
+      `Chlorophyll_Team_Notes_2024-03-01`)
+      ) |> rename(
+      Leaf1_Chlorophyll = `Leaf1_Chlorophyll_2024-04-30`,
+      Leaf2_Chlorophyll = `Leaf2_Chlorophyll_2024-04-30`,
+      Leaf3_Chlorophyll = `Leaf3_Chlorophyll_2024-04-30`,
+      Chlorophyll_Notes = `Chlorophyll_Team_Notes_2024-04-30` 
+      ) |> mutate(
+        Height_change_cm = `Height_cm_2024-04-30` - `Height_cm_2024-03-01`
+      ) |> mutate(
+        Percent_height_change = Height_change_cm / `Height_cm_2024-03-01`
+      )
+    ```
+
+## Analysis
+
+### Helpers
+
+##### Plot Values
+
+```{r}
+orange_p = "#f2790f"
+orange_s = "#f5cfae"
+
+green_p = "#47805b"
+green_s = "#8f8b89"
+
+brown_p = "#785c44"
+brown_s = "#bdb4ac"
+
+scoured_primary = brown_p
+scoured_secondary = brown_s
+nonscoured_primary = orange_p
+nonscoured_secondary = orange_s
+
+soil_type_labels = c(N = "Unscoured", S = "Scoured")
+species_labels = c(ENCCAL = "Encelia californica", ARTCAL = "Artemisia california", ERIFAS = "Eriogonum fasciculatum", SALMEL = "Salvia mellifera")
+```
+
+##### Write data
+
+```{r}
+SHOULD_WRITE_FILES = T
+FIGURE_WIDTH = 7
+FIGURE_HEIGHT = 4.5
+OUTPUT_FILE_PATH = "./landfill-output/"
+
+write_plot = function(output, plot_name, analysis_name) {
+  if(SHOULD_WRITE_FILES) {
+    ggsave(plot = output, width = FIGURE_WIDTH, height = FIGURE_HEIGHT,filename=paste(OUTPUT_FILE_PATH, analysis_name,"-",plot_name, ".jpg", sep = ""))
+  }
+}
+
+write_table = function(model, model_name, analysis_name) {
+  if(SHOULD_WRITE_FILES) {
+    write.csv(model, paste(OUTPUT_FILE_PATH, analysis_name,"-",model_name, ".csv", sep = ""))
+  }
+}
+```
+
+### Summary
+
+```{r}
+measurements |> ggplot() + 
+  aes(x = Species, fill = Species) + 
+  geom_bar() + 
+  facet_grid(~ Date)
+  
+measurements |> 
+  filter(Plant_status == 'Alive') |> 
+  ggplot() + 
+  aes(x = Species, fill = Species) + 
+  geom_bar() + 
+  facet_grid(~ Date)
+
+```
+
+### Height Change
+
+##### Data
+
+-   Filter out data that don't have before and after heights
+
+-   Create a set with only living shrubs, because if the plant is dead, its change in height may not be reflective.
+
+-   [ ] should I try to treat status as a factor instead of filtering it out? come back to this.
+
+```{r}
+# shrubs with measurements at both sampling times
+height_change_shrubs = shrubs |>
+  filter(!is.na(Height_change_cm))
+
+# shrubs with measurements at both sampling times, that are alive 
+height_change_shrubs_alive = height_change_shrubs |>
+  filter(`Plant_status_2024-04-30` == "Alive")
+```
+
+##### Visualize
+
+-   Visualize
+
+```{r}
+# Shrub counts per species by Status and Soil Type
+height_change_shrubs |> ggplot() + 
+  aes(x = Species, fill = Species) + 
+  geom_bar() + 
+  facet_grid(`Plant_status_2024-04-30` ~ Soil) + 
+  labs(title = "Shrub count by Status and Soil Type")
+
+# Box / jitterplot per species by Status and Soil Type
+height_change_shrubs |> ggplot() + 
+  aes(x = Species, y = Height_change_cm, color = Soil) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_point(position = position_jitterdodge(jitter.width = 0.2), alpha = 0.8) + 
+  facet_grid(~ `Plant_status_2024-04-30`)
+
+# Box / jitterplot per species for living plants by Soil type
+height_change_shrubs_alive |> ggplot() + 
+  aes(x = Species, y = Height_change_cm, color = Soil) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_point(position = position_jitterdodge(jitter.width = 0.2), alpha = 0.8)
+
+# Normalize height change using a percentage
+height_change_shrubs_alive |> ggplot() + 
+  aes(x = Species, y = Percent_height_change, color = Soil) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_point(position = position_jitterdodge(jitter.width = 0.2), alpha = 0.8)
+
+# Bar graph with sd and error bars
+height_change_shrubs_alive |> ggplot(
+    aes(x = Species, y = Height_change_cm, fill = Species)
+  ) + 
+  stat_summary(
+    fun = mean, 
+    geom= "col", 
+    position = "dodge"
+  ) +
+  stat_summary(
+    fun.data = mean_se, 
+    geom = "errorbar", 
+    position = position_dodge(0.9), 
+    width = 0.1
+  ) 
+
+
+# Bar graph with sd and error bars
+height_change_shrubs_alive |> ggplot(
+    aes(x = Species, y = Percent_height_change, fill = Species)
+  ) + 
+  stat_summary(
+    fun = mean, 
+    geom= "col", 
+    position = "dodge"
+  ) +
+  stat_summary(
+    fun.data = mean_se, 
+    geom = "errorbar", 
+    position = position_dodge(0.9), 
+    width = 0.1
+  ) 
+
+# (`[[`)("station_code")
+```
+
+##### Models and Normality
+
+```{r}
+height_change_shrubs_alive |> ggplot() +
+  aes(x = Height_change_cm) +
+  geom_histogram()
+
+height_model_interactions = 
+  glm(Height_change_cm ~ Species * Soil, data = height_change_shrubs_alive)
+height_model_no_interactions = 
+  glm(Height_change_cm ~ Species + Soil, data = height_change_shrubs_alive)
+height_model_species = 
+  glm(Height_change_cm ~ Species, data = height_change_shrubs_alive)
+
+plot(height_model_interactions)
+plot(height_model_no_interactions)
+plot(height_model_species) 
+
+percent_height_model_interactions = glm(Percent_height_change ~ Species * Soil, data = height_change_shrubs_alive)
+percent_height_model_no_interactions= glm(Percent_height_change ~ Species + Soil, data = height_change_shrubs_alive)
+percent_height_model_species= glm(Percent_height_change ~ Species, data = height_change_shrubs_alive)
+
+
+```
+
+##### ANOVA
+
+```{r}
+summary(height_model_interactions)
+summary(height_model_no_interactions)
+summary(height_model_species)
+
+summary(percent_height_model_interactions)
+summary(percent_height_model_no_interactions)
+summary(percent_height_model_species)
+
+```
+
+###### Location as random effect?
+
+```{r}
+
+summary(lmer(Percent_height_change ~ Soil * Species + (1|Site_numeric_id), data = height_change_shrubs_alive |> mutate(
+  Site_id = as.numeric(
+    factor(Site, levels=unique(Site))
+    )
+  )))
+```
+
+```{r}
+measurements |> 
+  ggplot() + 
+  aes(y = Height_cm) +
+  geom_histogram() + 
+  facet_grid(Month ~ Species)
+
+measurements |> group_by(Species, Month) |> 
+  summarise(
+    W = shapiro.test(Height_cm)$statistic,
+    `p value` = shapiro.test(Height_cm)$p.value
+  )
+
+
+
+anova(lm(log(Height_cm) ~ Species * Soil, data = measurements))
+
+measurements |> 
+  ggplot() + 
+  aes(y = log(Height_cm)) +
+  geom_histogram() + 
+  facet_grid(Month ~ Species)
+
+measurements |> group_by(Species, Month) |> 
+  summarise(
+    W = shapiro.test(log(Height_cm))$statistic,
+    `p value` = shapiro.test(log(Height_cm))$p.value
+  )
+
+measurements |> 
+  ggplot() +
+  aes(y = Height_cm, x = Month, color = Month) +
+  geom_boxplot() + 
+  facet_grid(Soil ~ Species)
+
+shrubs |> 
+  filter(`Plant_status_2024-04-30` == 'Alive' ) |> 
+  ggplot() + 
+  aes(y = Height_change_cm, x = Species, color = Soil) + 
+  geom_boxplot()
+
+shrubs |> 
+  ggplot() + 
+  aes(y = Height_change_cm) +
+  geom_histogram()
+
+anova(lm(log(Height_change_cm) ~ Species * Soil, data = shrubs))
+
+```
+
+##### Model Comparison
+
+### Survival
+
+model: `Survival ~ Species * Soil`
+
+##### Data
+
+```{r}
+survival_data = measurements |> 
+  filter(Month == 'April') |> 
+  select(c(shrub_id, Plant_status, Soil, Species, Notes)) |>
+  mutate(
+    Survival_index = case_when(
+      Plant_status == 'Alive' ~ 1, 
+      Plant_status == 'Dead' ~ 0, 
+      .default = NA
+      )
+    ) |>
+  filter(!is.na(Survival_index))
+```
+
+##### Visualize
+
+```{r}
+survival_bar_plot = survival_data |> ggplot() + 
+  aes(
+    x = Soil, 
+    fill = interaction(
+      factor(Plant_status, levels = c("Dead", "Alive")),
+      factor(Soil)
+      ),
+    ) +
+  geom_bar(position = "stack") +
+  facet_grid(~ Species) +
+  scale_fill_manual(
+    labels = c(
+      Alive.S = "Alive (scoured)",
+      Dead.S = "Dead (scoured)",
+      Alive.N = "Alive (unscoured)",
+      Dead.N = "Dead (unscoured)"
+    ),
+    values = c(
+      Alive.S = scoured_primary, Dead.S = scoured_secondary,
+      Alive.N = nonscoured_primary, Dead.N = nonscoured_secondary
+      )
+    ) + 
+  labs(
+    fill = "Soil type & Plant status",
+    x = "Soil type",
+    y = "Number of Plants",
+    title = "Impact of soil type on plant survival per species"
+    ) +
+  scale_x_discrete(labels = soil_type_labels,
+                   guide = guide_axis(angle = 60))
+
+write_plot(
+  survival_bar_plot,
+  "bar-plot",
+  "survival"
+)
+
+survival_bar_plot
+```
+
+##### Model and Normality
+
+```{r}
+
+soil_survival_model = glm(Survival_index ~ Soil * Species, data = survival_data, family = "binomial")
+
+soil_survival_no_erifas_model = glm(Survival_index ~ Soil * Species, data = survival_data |> filter(
+  Species != 'ERIFAS'
+), family = "binomial")
+
+plot(soil_survival_model)
+plot(soil_survival_no_erifas_model)
+
+```
+
+Looks a bit better without "ERIFAS", which we will exclude since there are only 4 individuals total, and 2 per soil type.
+
+##### Analysis and Tests
+
+Chi square test
+
+```{r}
+survival_test = anova(soil_survival_model, test="Chisq")
+
+write_table(survival_test, "chisq", "survival")
+
+survival_test
+```
+
+Results
+
+-   Significant interaction between Soil and Species on survivorship, aka the survivorship of some species is more likely to be affected by soil type than others. However, take with a grain of salt as P value is `0.087`.
+
+#### Species
+
+```{r}
+survival_data = measurements |> 
+  filter(Month == 'April') |> 
+  select(c(shrub_id, Plant_status, Soil, Species, Notes)) |>
+  mutate(Survival_index = case_when(Plant_status == 'Alive' ~ 1, Plant_status == 'Dead' ~ 0, .default = NA)) |> filter(!is.na(Survival_index))
+
+
+```
+
+### Chlorophyll Content
+
+##### Get data
+
+```{r}
+chlorophyll_data = measurements |> 
+  filter(Month == 'April') |> 
+  select(c(
+    shrub_id, 
+    Soil,
+    Species,
+    Leaf1_Chlorophyll, 
+    Leaf2_Chlorophyll, 
+    Leaf3_Chlorophyll, 
+    Chlorophyll_Team_Notes
+    )) |> 
+  pivot_longer(
+    cols = c(Leaf1_Chlorophyll, Leaf2_Chlorophyll, Leaf3_Chlorophyll),
+    values_to = 'Chlorophyll',
+    names_to = "Leaf"
+  ) |> mutate(
+    Leaf = case_when(
+      Leaf == "Leaf1_Chlorophyll" ~ as.numeric(1),
+      Leaf == "Leaf2_Chlorophyll" ~ as.numeric(2),
+      Leaf == "Leaf3_Chlorophyll" ~ as.numeric(3)
+    )
+  ) |> filter(
+    !is.na(Chlorophyll)
+  ) 
+
+ chlorophyll_data_mean = chlorophyll_data |> 
+  group_by(shrub_id, Soil, Species, Chlorophyll_Team_Notes) |> 
+   summarise(
+    Mean_Chlorophyll = mean(Chlorophyll)
+   ) |> ungroup()
+ 
+ chlorophyll_data_mean
+```
+
+##### Visualize
+
+```{r}
+chlorophyll_data_mean |> ggplot() + 
+  aes(x = Mean_Chlorophyll) +
+  geom_histogram()
+
+chlorophyll_data_mean |> 
+  complete(Soil, Species, fill = list(Mean_Chlorophyll = 0)) |>
+  ggplot(
+    aes(x = Species, y = Mean_Chlorophyll, fill = Soil)
+  ) + 
+  stat_summary(
+    fun = mean, 
+    geom= "col", 
+    position = "dodge"
+  ) +
+  stat_summary(
+    fun.data = mean_se, 
+    geom = "errorbar", 
+    position = position_dodge(0.9), 
+    width = 0.1
+  ) + 
+  scale_fill_manual(values = c(N = nonscoured_primary, S = scoured_primary)) + 
+  labs(
+    title = "Impact of Soil on Chlorophyll Content per Species",
+    y = "Mean Chlorophyll Content per Plant"
+  )
+
+
+
+chlorophyll_data_mean |>   
+ggplot() + 
+  aes(x = Soil, y = Mean_Chlorophyll, color = Soil, fill = Soil) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_point(
+    shape=4,
+    position = position_jitterdodge(jitter.width = 0.3), 
+    alpha = 0.8) +
+  scale_color_manual(
+    values = c(N = nonscoured_primary, S = scoured_primary),
+    labels = soil_type_labels
+    ) +
+  scale_fill_manual(
+    values= c(N = nonscoured_secondary, S = scoured_secondary),
+    labels=soil_type_labels
+    ) + 
+  facet_grid(~Species) +
+  scale_x_discrete(
+    labels =soil_type_labels,
+    guide = guide_axis(angle = 60)
+  ) +
+  labs(
+    title = "Impact of Soil on Chlorophyll Content per Species",
+    y = "Mean Chlorophyll Content per Plant"
+  )
+
+```
+
+##### Normality
+
+```{r}
+chlorophyll_with_interactions = glm(Mean_Chlorophyll ~ Species * Soil, data = chlorophyll_data_mean)
+
+plot(chlorophyll_with_interactions)
+```
+
+2.  Try to group by plant as a random effect
+
+    ```{r}
+
+    model1 = lmer(Chlorophyll ~ Soil * Species + (1|shrub_id), data = chlorophyll_data)
+
+    summary(model1)
+    ```
+
+3.  ANOVA
+
+```{r}
+summary(chlorophyll_with_interactions)
+  # Logicstic regression
+# Impact of Species / soil type on Survival
+
+# Change in height ANOVA 
+
+# How many of each species in each soil type? 
+
+# Species -> Hieght
+# Soil type -> Height
+# Interactions? 
+
+# Species -> Chlorophyll Content
+# Soil type -> Chlorophyll Content
+# Interactions? 
+```
+
+Anovas for individual species
+
+```{r}
+glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+  Species == "ENCCAL"
+)) |> summary()
+
+glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+  Species == "ARTCAL"
+)) |> summary()
+
+glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+  Species == "SALMEL"
+)) |> summary()
+
+```
