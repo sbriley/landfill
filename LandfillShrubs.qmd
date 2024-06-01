@@ -338,7 +338,7 @@ height_change_shrubs_alive |> ggplot(
 
 
 # Bar graph with sd and error bars
-height_change_shrubs_alive |> ggplot(
+height_box_plot = height_change_shrubs_alive |> ggplot(
     aes(x = Species, y = Percent_height_change, fill = Species)
   ) + 
   stat_summary(
@@ -351,7 +351,26 @@ height_change_shrubs_alive |> ggplot(
     geom = "errorbar", 
     position = position_dodge(0.9), 
     width = 0.1
-  ) 
+  ) + 
+  scale_fill_manual(
+    labels = species_labels,
+    values = c(viridis::viridis(5))
+  ) +
+  scale_x_discrete(
+    labels = str_replace_all(species_labels, "\\s", "\n")
+  ) +
+  labs(
+    title = "Height by Soil Type and Species",
+    y = "Percent height change"
+  ) +
+  theme(
+    axis.text.x = element_text(face = 'italic'),
+    legend.text = element_text(face = 'italic')
+    )
+
+height_box_plot
+
+write_plot(height_box_plot, "box-plot", "height")
 
 # (`[[`)("station_code")
 ```
@@ -377,6 +396,7 @@ plot(height_model_species)
 percent_height_model_interactions = glm(Percent_height_change ~ Species * Soil, data = height_change_shrubs_alive)
 percent_height_model_no_interactions= glm(Percent_height_change ~ Species + Soil, data = height_change_shrubs_alive)
 percent_height_model_species= glm(Percent_height_change ~ Species, data = height_change_shrubs_alive)
+percent_height_model_soil= glm(Percent_height_change ~ Soil, data = height_change_shrubs_alive)
 
 
 ```
@@ -384,6 +404,13 @@ percent_height_model_species= glm(Percent_height_change ~ Species, data = height
 ##### ANOVA
 
 ```{r}
+AIC(height_model_interactions)
+AIC(height_model_no_interactions)
+AIC(height_model_species)
+
+AIC(percent_height_model_interactions)
+AIC(percent_height_model_no_interactions)
+
 summary(height_model_interactions)
 summary(height_model_no_interactions)
 summary(height_model_species)
@@ -391,6 +418,8 @@ summary(height_model_species)
 summary(percent_height_model_interactions)
 summary(percent_height_model_no_interactions)
 summary(percent_height_model_species)
+summary(percent_height_model_soil)
+
 
 ```
 
@@ -458,6 +487,8 @@ anova(lm(log(Height_change_cm) ~ Species * Soil, data = shrubs))
 ##### Model Comparison
 
 ### Survival
+
+#### Species and Soil
 
 model: `Survival ~ Species * Soil`
 
@@ -551,7 +582,7 @@ survival_test
 
 Results
 
--   Significant interaction between Soil and Species on survivorship, aka the survivorship of some species is more likely to be affected by soil type than others. However, take with a grain of salt as P value is `0.087`.
+-   Significant(ish?) interaction between Soil and Species on survival, aka the survival of some species is more likely to be affected by soil type than others. However, take with a grain of salt as P value is `0.087`.
 
 #### Species
 
@@ -599,8 +630,6 @@ chlorophyll_data = measurements |>
    summarise(
     Mean_Chlorophyll = mean(Chlorophyll)
    ) |> ungroup()
- 
- chlorophyll_data_mean
 ```
 
 ##### Visualize
@@ -610,7 +639,7 @@ chlorophyll_data_mean |> ggplot() +
   aes(x = Mean_Chlorophyll) +
   geom_histogram()
 
-chlorophyll_data_mean |> 
+chlorophyll_barplot = chlorophyll_data_mean |> 
   complete(Soil, Species, fill = list(Mean_Chlorophyll = 0)) |>
   ggplot(
     aes(x = Species, y = Mean_Chlorophyll, fill = Soil)
@@ -634,7 +663,7 @@ chlorophyll_data_mean |>
 
 
 
-chlorophyll_data_mean |>   
+chlorophyll_boxplot = chlorophyll_data_mean |>   
 ggplot() + 
   aes(x = Soil, y = Mean_Chlorophyll, color = Soil, fill = Soil) + 
   geom_boxplot(outlier.shape = NA) + 
@@ -660,9 +689,14 @@ ggplot() +
     y = "Mean Chlorophyll Content per Plant"
   )
 
+write_plot(chlorophyll_barplot, "bar-plot", "chlorophyll")
+write_plot(chlorophyll_boxplot, "box-plot", "chlorophyll")
+
+chlorophyll_barplot
+chlorophyll_boxplot
 ```
 
-##### Normality
+##### Models and Normality
 
 ```{r}
 chlorophyll_with_interactions = glm(Mean_Chlorophyll ~ Species * Soil, data = chlorophyll_data_mean)
@@ -670,33 +704,29 @@ chlorophyll_with_interactions = glm(Mean_Chlorophyll ~ Species * Soil, data = ch
 plot(chlorophyll_with_interactions)
 ```
 
-2.  Try to group by plant as a random effect
-
-    ```{r}
-
-    model1 = lmer(Chlorophyll ~ Soil * Species + (1|shrub_id), data = chlorophyll_data)
-
-    summary(model1)
-    ```
-
-3.  ANOVA
+Try to group by plant as a random effect
 
 ```{r}
-summary(chlorophyll_with_interactions)
-  # Logicstic regression
-# Impact of Species / soil type on Survival
 
-# Change in height ANOVA 
+model1 = lmer(Chlorophyll ~ Soil * Species + (1|shrub_id), data = chlorophyll_data)
+```
 
-# How many of each species in each soil type? 
+##### ANOVA
 
-# Species -> Hieght
-# Soil type -> Height
-# Interactions? 
+```{r}
 
-# Species -> Chlorophyll Content
-# Soil type -> Chlorophyll Content
-# Interactions? 
+AIC(chlorophyll_with_interactions)
+AIC(model1)
+
+chlorophyll_test = summary(chlorophyll_with_interactions)
+
+# AIC is much worse for this one even though the results are similar
+summary(model1) 
+
+write_table(chlorophyll_test$coefficients, "anova", "chlorophyll")
+
+chlorophyll_test
+chlorophyll_test$coefficients
 ```
 
 Anovas for individual species
