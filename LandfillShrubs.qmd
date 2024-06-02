@@ -14,11 +14,14 @@ library(assertthat)
 library(tidyverse)
 library(lmerTest)
 library(lme4)
+library(vegan)
 ```
 
+### Shrub data
+
 ```{r}
-data.march <- read.csv("./Landfill_shrub_March_data.csv")
-data.april <- read.csv("./Landfill_shrub_data.csv")
+data.march <- read.csv("./raw-data/Landfill_shrub_March_data.csv")
+data.april <- read.csv("./raw-data/Landfill_shrub_data.csv")
 
 # drop rows without a date, since there are lots of rows with empty strings
 data.march[data.march==''] = NA
@@ -41,6 +44,42 @@ All Plant IDs
 ```{r}
 assert_that(sum(!(data.april$shrub_id %in% data.march$shrub_id)) == 0,
             msg = "All april shrubs should be present in march data")
+```
+
+### Soil Data
+
+```{r}
+soil_raw = readxl::read_excel("./raw-data/soil.XLSX")
+
+# observation rows
+column_names = unname(c(soil_raw[8,1:2], soil_raw[7,3:28])) |>
+  str_replace(' ', "_") |> 
+  str_replace("0\\.", "pt") |> 
+  str_replace('\\)', '') |> 
+  str_replace('\\(','') |>
+  str_replace('\\r\\n', "_")
+
+units = unname(c(soil_raw[8,1:28])) |> 
+  str_extract("(?<=\r\n).*") |> 
+  str_replace("/", "_")
+units[1:2] = ""
+
+column_names = paste(column_names, units, sep="_")
+x = bind_rows(soil_raw[9:14,28], soil_raw[25:39,])
+
+soil1 = soil_raw[9:14,1:28]
+colnames(soil1) = column_names
+soil2 = soil_raw[25:39,1:23]
+colnames(soil2) = column_names
+
+soil_messy = bind_rows(soil1, soil2) 
+
+soil_messy = soil_messy |> rename(
+  Lab_sample_num = `LAB_SAMPLE_#_`,
+  Client_description = Client__Description_,
+  pH = pH_,
+  SAR = SAR_
+)
 ```
 
 ## Tidy format
@@ -66,6 +105,27 @@ data = bind_rows(
       Height_cm = as.numeric(Height_cm),
       Date = mdy('4/30/2024')
       ))
+```
+
+### Soil
+
+```{r}
+soil_messy[soil_messy == "ISM"] = NA
+
+soil = soil_messy |>
+   fill(
+     Client_description,
+     `SP_%`,
+     .direction = "down") |> 
+   separate(Lab_sample_num, into = c('Sample_num', 'Lab_sample_test_num'), fill = 'right') |>
+   mutate(
+     Lab_sample_test_num = case_when(
+       Lab_sample_test_num == "dup" ~ 2,
+       is.na(Lab_sample_test_num) ~ 1
+       )
+     ) |>
+   separate(Client_description, into = c('Location', 'Depth')) |> 
+   mutate_all(function(x) str_replace(x, "<", ''))
 ```
 
 ## Validation
@@ -269,6 +329,19 @@ measurements |>
 
 ```
 
+### Soil
+
+```{r}
+
+soil |> group_by(Location, Depth)
+
+soil_matrix = as.matrix(mutate_all((soil[6:25]), as.numeric))
+rownames(soil_matrix) = paste(soil$Location, soil$Depth, soil$Lab_sample_test_num, sep='-')
+
+
+#prcomp(soil_matrix, scale = TRUE)
+```
+
 ### Height Change
 
 ##### Data
@@ -426,62 +499,11 @@ summary(percent_height_model_soil)
 ###### Location as random effect?
 
 ```{r}
-
 summary(lmer(Percent_height_change ~ Soil * Species + (1|Site_numeric_id), data = height_change_shrubs_alive |> mutate(
   Site_id = as.numeric(
     factor(Site, levels=unique(Site))
     )
   )))
-```
-
-```{r}
-measurements |> 
-  ggplot() + 
-  aes(y = Height_cm) +
-  geom_histogram() + 
-  facet_grid(Month ~ Species)
-
-measurements |> group_by(Species, Month) |> 
-  summarise(
-    W = shapiro.test(Height_cm)$statistic,
-    `p value` = shapiro.test(Height_cm)$p.value
-  )
-
-
-
-anova(lm(log(Height_cm) ~ Species * Soil, data = measurements))
-
-measurements |> 
-  ggplot() + 
-  aes(y = log(Height_cm)) +
-  geom_histogram() + 
-  facet_grid(Month ~ Species)
-
-measurements |> group_by(Species, Month) |> 
-  summarise(
-    W = shapiro.test(log(Height_cm))$statistic,
-    `p value` = shapiro.test(log(Height_cm))$p.value
-  )
-
-measurements |> 
-  ggplot() +
-  aes(y = Height_cm, x = Month, color = Month) +
-  geom_boxplot() + 
-  facet_grid(Soil ~ Species)
-
-shrubs |> 
-  filter(`Plant_status_2024-04-30` == 'Alive' ) |> 
-  ggplot() + 
-  aes(y = Height_change_cm, x = Species, color = Soil) + 
-  geom_boxplot()
-
-shrubs |> 
-  ggplot() + 
-  aes(y = Height_change_cm) +
-  geom_histogram()
-
-anova(lm(log(Height_change_cm) ~ Species * Soil, data = shrubs))
-
 ```
 
 ##### Model Comparison
@@ -497,7 +519,7 @@ model: `Survival ~ Species * Soil`
 ```{r}
 survival_data = measurements |> 
   filter(Month == 'April') |> 
-  select(c(shrub_id, Plant_status, Soil, Species, Notes)) |>
+  select(c(shrub_id, Plant_status, Soil, Species, Notes, Site)) |>
   mutate(
     Survival_index = case_when(
       Plant_status == 'Alive' ~ 1, 
@@ -587,12 +609,70 @@ Results
 #### Species
 
 ```{r}
-survival_data = measurements |> 
-  filter(Month == 'April') |> 
-  select(c(shrub_id, Plant_status, Soil, Species, Notes)) |>
-  mutate(Survival_index = case_when(Plant_status == 'Alive' ~ 1, Plant_status == 'Dead' ~ 0, .default = NA)) |> filter(!is.na(Survival_index))
+anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
+  Species == 'ENCCAL'
+), family = "binomial"), test = "Chisq")
+
+anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
+  Species == 'ARTCAL'
+), family = "binomial"), test = "Chisq")
+
+anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
+  Species == 'SALMEL'
+), family = "binomial"), test = "Chisq")
 
 
+```
+
+#### Salinity
+
+##### Data
+
+```{r}
+salinity_survival = soil |> 
+  select(c(
+    Location, 
+    Depth, 
+    EC_dS_m,
+    Lab_sample_test_num
+    )) |> 
+  mutate(EC_dS_m= as.numeric(EC_dS_m)) |>
+  inner_join(
+    survival_data |> 
+      select(c(
+        shrub_id, 
+        Site, 
+        Survival_index,
+        Species
+        )),
+    by = join_by(Location == Site)
+  ) |>
+  arrange(shrub_id) |> 
+  mutate(
+    Soil_id = paste(
+      shrub_id,
+      Depth,
+      Lab_sample_test_num, 
+      sep = "_")
+  )
+
+
+anova(glm( 
+  Survival_index ~ EC_dS_m,
+  data = salinity_survival,  
+  family = binomial(link="logit") )
+  )
+```
+
+##### Visualize
+
+```{r}
+salinity_survival |> filter(
+    Lab_sample_test_num == 1
+  )|> ggplot() +
+  aes(x = EC_dS_m,y=Survival_index) +
+  geom_point() +
+  facet_grid(Species ~ Depth)
 ```
 
 ### Chlorophyll Content
@@ -630,6 +710,12 @@ chlorophyll_data = measurements |>
    summarise(
     Mean_Chlorophyll = mean(Chlorophyll)
    ) |> ungroup()
+```
+
+##### Summarize Data
+
+```{r}
+chlorophyll_data
 ```
 
 ##### Visualize
@@ -729,19 +815,37 @@ chlorophyll_test
 chlorophyll_test$coefficients
 ```
 
-Anovas for individual species
+##### Anovas for individual species
 
 ```{r}
-glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+enccal_chlorophyll_model = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "ENCCAL"
-)) |> summary()
+)) 
 
-glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+get_df(enccal_chlorophyll_model)
+
+t.test(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(Species == "ENCCAL"))
+enccal_chlorophyll = enccal_chlorophyll_model |> summary()
+
+enccal_chlorophyll
+
+write_table(enccal_chlorophyll$coefficients, "anova-enccal", "chlorophyll")
+
+artcal_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "ARTCAL"
 )) |> summary()
 
-glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+artcal_chlorophyll
+
+write_table(artcal_chlorophyll$coefficients, "anova-artcal", "chlorophyll")
+
+salmel_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "SALMEL"
 )) |> summary()
+
+salmel_chlorophyll
+
+write_table(salmel_chlorophyll$coefficients, "anova-salmel", "chlorophyll")
+
 
 ```
