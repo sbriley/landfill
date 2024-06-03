@@ -362,6 +362,24 @@ height_change_shrubs_alive = height_change_shrubs |>
   filter(`Plant_status_2024-04-30` == "Alive")
 ```
 
+##### Summarize
+
+```{r}
+height_change_summary_table = height_change_shrubs_alive |> 
+  group_by(Species, Soil) |>
+  summarise(
+    mean_percent_height_change = mean(Percent_height_change),
+    mean_height_change = mean(Height_change_cm),
+    count = n(),
+    sd_percent_height_change = sd(Percent_height_change),
+    se_percent_height_change = sd(Percent_height_change)/sqrt(n())
+  ) 
+ 
+write_table(height_change_summary_table, "summary-table", "height")
+
+height_change_summary_table
+```
+
 ##### Visualize
 
 -   Visualize
@@ -506,7 +524,50 @@ summary(lmer(Percent_height_change ~ Soil * Species + (1|Site_numeric_id), data 
   )))
 ```
 
-##### Model Comparison
+##### T-tests
+
+```{r}
+
+
+artcal_height_ttest = t.test(Height_change_cm ~ Soil, data = height_change_shrubs_alive |> filter(Species == "ARTCAL"))
+
+write_table(summarize_ttest(artcal_height_ttest), "ttest-artcal", "height")
+
+artcal_height_ttest
+
+enccal_height_ttest = t.test(Height_change_cm ~ Soil, data = height_change_shrubs_alive |> filter(Species == "ENCCAL"))
+
+write_table(summarize_ttest(enccal_height_ttest), "ttest-enccal", "height")
+
+enccal_height_ttest
+
+salmel_height_ttest = t.test(Height_change_cm ~ Soil, data = height_change_shrubs_alive |> filter(Species == "SALMEL"))
+
+write_table(summarize_ttest(salmel_height_ttest), "ttest-salmel", "height")
+
+salmel_height_ttest
+```
+
+```{r}
+
+artcal_height_ttest = t.test(Percent_height_change ~ Soil, data = height_change_shrubs_alive |> filter(Species == "ARTCAL"))
+
+write_table(summarize_ttest(artcal_height_ttest), "ttest-artcal", "height-percent")
+
+artcal_height_ttest
+
+enccal_height_ttest = t.test(Percent_height_change ~ Soil, data = height_change_shrubs_alive |> filter(Species == "ENCCAL"))
+
+write_table(summarize_ttest(enccal_height_ttest), "ttest-enccal", "height-percent")
+
+enccal_height_ttest
+
+salmel_height_ttest = t.test(Percent_height_change ~ Soil, data = height_change_shrubs_alive |> filter(Species == "SALMEL"))
+
+write_table(summarize_ttest(salmel_height_ttest), "ttest-salmel", "height-percent")
+
+salmel_height_ttest
+```
 
 ### Survival
 
@@ -528,6 +589,21 @@ survival_data = measurements |>
       )
     ) |>
   filter(!is.na(Survival_index))
+```
+
+##### Summarize
+
+```{r}
+survival_summary_table = survival_data |> group_by(
+  Soil, Species
+) |> summarise(
+  'Survival Rate' = sum(Plant_status == 'Alive') / n(),
+  Count = n()
+)
+
+write_table(survival_summary_table, "summary-table", "survival")
+
+survival_summary_table
 ```
 
 ##### Visualize
@@ -606,7 +682,7 @@ Results
 
 -   Significant(ish?) interaction between Soil and Species on survival, aka the survival of some species is more likely to be affected by soil type than others. However, take with a grain of salt as P value is `0.087`.
 
-#### Species
+#### Species-specific
 
 ```{r}
 anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
@@ -637,6 +713,10 @@ salinity_survival = soil |>
     Lab_sample_test_num
     )) |> 
   mutate(EC_dS_m= as.numeric(EC_dS_m)) |>
+  group_by(Location, Depth) |> 
+  summarise(
+    EC_dS_m = mean(EC_dS_m)
+  ) |> ungroup() |>
   inner_join(
     survival_data |> 
       select(c(
@@ -652,13 +732,12 @@ salinity_survival = soil |>
     Soil_id = paste(
       shrub_id,
       Depth,
-      Lab_sample_test_num, 
       sep = "_")
   )
 
 
-anova(glm( 
-  Survival_index ~ EC_dS_m,
+summary(glm( 
+  Survival_index ~ EC_dS_m * Depth * Species,
   data = salinity_survival,  
   family = binomial(link="logit") )
   )
@@ -667,12 +746,16 @@ anova(glm(
 ##### Visualize
 
 ```{r}
-salinity_survival |> filter(
-    Lab_sample_test_num == 1
-  )|> ggplot() +
+salinity_survival |> ggplot() +
   aes(x = EC_dS_m,y=Survival_index) +
-  geom_point() +
-  facet_grid(Species ~ Depth)
+  geom_jitter(height = 0.1) +
+  stat_smooth(method="glm", method.args=list(family="binomial"), se=FALSE)
+
+salinity_survival |> ggplot() +
+  aes(x = EC_dS_m,y=Survival_index) +
+  geom_jitter(height = 0.1) +
+  facet_grid(Depth ~ Species) +
+  stat_smooth(method="glm", method.args=list(family="binomial"), se=FALSE)
 ```
 
 ### Chlorophyll Content
@@ -715,7 +798,41 @@ chlorophyll_data = measurements |>
 ##### Summarize Data
 
 ```{r}
-chlorophyll_data
+chlorophyll_summary_table = chlorophyll_data_mean |> group_by(
+  Soil, Species
+) |> summarise(
+  'Mean Chlorophyll' = mean(Mean_Chlorophyll),
+  Count = n(),
+  sd = sd(Mean_Chlorophyll),
+  se = sd(Mean_Chlorophyll)/sqrt(n())
+) |> fill(
+  Count
+)
+
+write_table(chlorophyll_summary_table, "summary-table", "chlorophyll")
+
+chlorophyll_data_summary_plot = chlorophyll_data_mean |> ggplot() +
+  aes(x = Soil, fill = Soil) + 
+  geom_bar(position = 'dodge') + 
+  facet_grid(~Species) + 
+  labs(
+    title = "Total number of living plants with Chlorophyll measurements per soil type",
+    x = "Soil Type",
+    y = "Number of Plants"
+  ) +
+  scale_fill_manual(
+    values = c(N = nonscoured_primary, S = scoured_primary),
+        labels=soil_type_labels
+) +
+  scale_x_discrete(
+    labels =soil_type_labels,
+    guide = guide_axis(angle = 60)
+  ) 
+
+write_plot(chlorophyll_data_summary_plot, "summary-plot", "chlorophyll")
+
+chlorophyll_data_summary_plot
+
 ```
 
 ##### Visualize
@@ -815,21 +932,35 @@ chlorophyll_test
 chlorophyll_test$coefficients
 ```
 
-##### Anovas for individual species
+##### ANOVAs for individual species
+
+Are individual species normally distributed?
+
+```{r}
+chlorophyll_data_mean |> ggplot() +
+  aes(x = Mean_Chlorophyll) + 
+  geom_histogram() +
+  facet_grid(Species ~ Soil)
+
+tmp = shapiro.test(chlorophyll_data_mean$Mean_Chlorophyll)
+
+chlorophyll_data_mean |> 
+  filter(Species != 'ERIFAS') |>
+  group_by(Species, Soil) |> 
+  summarise(
+    shapiro.test(Mean_Chlorophyll)$p.value,
+    shapiro.test(Mean_Chlorophyll)$statistic
+  )
+```
 
 ```{r}
 enccal_chlorophyll_model = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "ENCCAL"
 )) 
 
-get_df(enccal_chlorophyll_model)
+write_table(enccal_chlorophyll_model$coefficients, "anova-enccal", "chlorophyll")
 
-t.test(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(Species == "ENCCAL"))
-enccal_chlorophyll = enccal_chlorophyll_model |> summary()
-
-enccal_chlorophyll
-
-write_table(enccal_chlorophyll$coefficients, "anova-enccal", "chlorophyll")
+enccal_chlorophyll_model
 
 artcal_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "ARTCAL"
@@ -847,5 +978,50 @@ salmel_chlorophyll
 
 write_table(salmel_chlorophyll$coefficients, "anova-salmel", "chlorophyll")
 
+
+```
+
+##### T-tests
+
+```{r}
+summarize_ttest = function (ttest_results) {
+  summary = bind_cols(
+    data = ttest_results$data,
+    t = ttest_results$statistic,
+    df = ttest_results$parameter,
+    p.value = ttest_results$p.value,
+    confidence_int_lower = ttest_results$conf.int[1],
+    confidence_int_upper = ttest_results$conf.int[2],
+    confidence_int_level = attributes(ttest_results$conf.int)$conf.level,
+    se = ttest_results$stderr,
+  )
+  summary[names(ttest_results$estimate[1])] = ttest_results$estimate[1]
+  summary[names(ttest_results$estimate[2])] = ttest_results$estimate[2]
+
+  summary
+}
+```
+
+```{r}
+
+
+enccal_chlorophyll_ttest = t.test(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(Species == "ENCCAL"))
+
+write_table(summarize_ttest(enccal_chlorophyll_ttest), "ttest-enccal", "chlorophyll")
+
+enccal_chlorophyll_ttest
+
+
+artcal_chlorophyll_ttest = t.test(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(Species == "ARTCAL"))
+
+write_table(summarize_ttest(artcal_chlorophyll_ttest), "ttest-artcal", "chlorophyll")
+
+artcal_chlorophyll_ttest
+
+salmel_chlorophyll_ttest = t.test(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(Species == "SALMEL"))
+
+write_table(summarize_ttest(salmel_chlorophyll_ttest), "ttest-salmel", "chlorophyll")
+
+salmel_chlorophyll_ttest
 
 ```
