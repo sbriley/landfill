@@ -49,30 +49,30 @@ assert_that(sum(!(data.april$shrub_id %in% data.march$shrub_id)) == 0,
 ### Soil Data
 
 ```{r}
-soil_raw = readxl::read_excel("./raw-data/soil.XLSX")
+soil.names = readxl::read_excel("./raw-data/soil.XLSX", range = "A8:AB9", col_names = F)
+soil.1 = readxl::read_excel("./raw-data/soil.XLSX", range = "A10:AB15", col_names = FALSE, col_types = c("text", "text", rep(c("numeric"), each=26)))
+
+soil.2 = readxl::read_excel("./raw-data/soil.XLSX", range = "A26:W40", col_names = FALSE, col_types = c("text", "text", rep(c("numeric"), each=21)))
 
 # observation rows
-column_names = unname(c(soil_raw[8,1:2], soil_raw[7,3:28])) |>
+column_names = unname(c(soil.names[2,1:2], soil.names[1,3:28])) |>
   str_replace(' ', "_") |> 
   str_replace("0\\.", "pt") |> 
   str_replace('\\)', '') |> 
   str_replace('\\(','') |>
   str_replace('\\r\\n', "_")
 
-units = unname(c(soil_raw[8,1:28])) |> 
+units = unname(c(soil.names[2,1:28])) |> 
   str_extract("(?<=\r\n).*") |> 
   str_replace("/", "_")
 units[1:2] = ""
 
 column_names = paste(column_names, units, sep="_")
-x = bind_rows(soil_raw[9:14,28], soil_raw[25:39,])
 
-soil1 = soil_raw[9:14,1:28]
-colnames(soil1) = column_names
-soil2 = soil_raw[25:39,1:23]
-colnames(soil2) = column_names
+colnames(soil.1) = column_names
+colnames(soil.2) = column_names
 
-soil_messy = bind_rows(soil1, soil2) 
+soil_messy = bind_rows(soil.1, soil.2) 
 
 soil_messy = soil_messy |> rename(
   Lab_sample_num = `LAB_SAMPLE_#_`,
@@ -105,27 +105,6 @@ data = bind_rows(
       Height_cm = as.numeric(Height_cm),
       Date = mdy('4/30/2024')
       ))
-```
-
-### Soil
-
-```{r}
-soil_messy[soil_messy == "ISM"] = NA
-
-soil = soil_messy |>
-   fill(
-     Client_description,
-     `SP_%`,
-     .direction = "down") |> 
-   separate(Lab_sample_num, into = c('Sample_num', 'Lab_sample_test_num'), fill = 'right') |>
-   mutate(
-     Lab_sample_test_num = case_when(
-       Lab_sample_test_num == "dup" ~ 2,
-       is.na(Lab_sample_test_num) ~ 1
-       )
-     ) |>
-   separate(Client_description, into = c('Location', 'Depth')) |> 
-   mutate_all(function(x) str_replace(x, "<", ''))
 ```
 
 ## Validation
@@ -223,48 +202,90 @@ We would expect that:
 
 ## Cleaning
 
-1.  Get rid of unnecessary columns
+### Shrubs
 
-    ```{r}
-    measurements = data |> select(-c(Team, Chlorophyll_Team)) |> mutate(
-        Month = case_when(
-          month(Date) == 3 ~ "March",
-          month(Date) == 4 ~ "April")) |> mutate(
-      Site_numeric_id = 
-        as.numeric(factor(Site, levels=unique(Site)))
-    )
+```{r}
+measurements = data |> select(-c(Team, Chlorophyll_Team)) |> mutate(
+    Month = case_when(
+      month(Date) == 3 ~ "March",
+      month(Date) == 4 ~ "April")) |> mutate(
+  Site_numeric_id = 
+    as.numeric(factor(Site, levels=unique(Site)))
+)
 
-    shrubs = measurements |> 
-      pivot_wider(
-        id_cols = c(shrub_id),
-        names_from = c(Date),
-        values_from = c(
-          Height_cm, 
-          Plant_status, 
-          Notes,
-          Leaf1_Chlorophyll, 
-          Leaf2_Chlorophyll, 
-          Leaf3_Chlorophyll, 
-          Chlorophyll_Team_Notes,
-          Month
-          ),
-        unused_fn = unique
-    ) |> select(-c(
-      `Leaf1_Chlorophyll_2024-03-01`, 
-      `Leaf2_Chlorophyll_2024-03-01`, 
-      `Leaf3_Chlorophyll_2024-03-01`, 
-      `Chlorophyll_Team_Notes_2024-03-01`)
-      ) |> rename(
-      Leaf1_Chlorophyll = `Leaf1_Chlorophyll_2024-04-30`,
-      Leaf2_Chlorophyll = `Leaf2_Chlorophyll_2024-04-30`,
-      Leaf3_Chlorophyll = `Leaf3_Chlorophyll_2024-04-30`,
-      Chlorophyll_Notes = `Chlorophyll_Team_Notes_2024-04-30` 
-      ) |> mutate(
-        Height_change_cm = `Height_cm_2024-04-30` - `Height_cm_2024-03-01`
-      ) |> mutate(
-        Percent_height_change = Height_change_cm / `Height_cm_2024-03-01`
-      )
-    ```
+shrubs = measurements |> 
+  pivot_wider(
+    id_cols = c(shrub_id),
+    names_from = c(Date),
+    values_from = c(
+      Height_cm, 
+      Plant_status, 
+      Notes,
+      Leaf1_Chlorophyll, 
+      Leaf2_Chlorophyll, 
+      Leaf3_Chlorophyll, 
+      Chlorophyll_Team_Notes,
+      Month
+      ),
+    unused_fn = unique
+) |> select(-c(
+  `Leaf1_Chlorophyll_2024-03-01`, 
+  `Leaf2_Chlorophyll_2024-03-01`, 
+  `Leaf3_Chlorophyll_2024-03-01`, 
+  `Chlorophyll_Team_Notes_2024-03-01`)
+  ) |> rename(
+  Leaf1_Chlorophyll = `Leaf1_Chlorophyll_2024-04-30`,
+  Leaf2_Chlorophyll = `Leaf2_Chlorophyll_2024-04-30`,
+  Leaf3_Chlorophyll = `Leaf3_Chlorophyll_2024-04-30`,
+  Chlorophyll_Notes = `Chlorophyll_Team_Notes_2024-04-30` 
+  ) |> mutate(
+    Height_change_cm = `Height_cm_2024-04-30` - `Height_cm_2024-03-01`
+  ) |> mutate(
+    Percent_height_change = Height_change_cm / `Height_cm_2024-03-01`
+  )
+```
+
+### Soil
+
+```{r}
+soil_messy[soil_messy == "ISM"] = NA
+
+soil = soil_messy |>
+   fill(
+     Client_description,
+     `SP_%`,
+     .direction = "down") |> 
+   separate(Lab_sample_num, into = c('Sample_num', 'Lab_sample_test_num'), fill = 'right') |>
+   separate(Client_description, into = c('Location', 'Depth')) |>
+   mutate(
+     Lab_sample_test_num = case_when(
+       Lab_sample_test_num == "dup" ~ 2,
+       is.na(Lab_sample_test_num) ~ 1
+       ),
+     Soil_type = str_extract(Location, '(?<=\\d)(S)')
+     ) |>
+   mutate(
+     Soil_type = case_when(
+       Soil_type == "S" ~ "S",
+       .default = "N"
+     )
+     ) |> 
+   relocate(
+      Soil_type, .after = Location
+    ) |> 
+   mutate_all(function(x) str_replace(x, "<", '')) |> 
+  mutate_at(
+    .vars = vars(-c('Location','Soil_type', 'Depth')),
+    as.numeric
+  )
+
+```
+
+At this point, there are three clean data frames for the analysis:
+
+1.  `measurements`: All observations from march and April
+2.  `shrubs`: One record per shrub, including measurements from both March and April, and the change in height
+3.  `soil`: One record per soil sample. Some locations have depths, and some have multiple samples at the same depth.
 
 ## Analysis
 
@@ -272,12 +293,11 @@ We would expect that:
 
 ##### Plot Values
 
+Define colors for graphs and labels
+
 ```{r}
 orange_p = "#f2790f"
 orange_s = "#f5cfae"
-
-green_p = "#47805b"
-green_s = "#8f8b89"
 
 brown_p = "#785c44"
 brown_s = "#bdb4ac"
@@ -289,9 +309,12 @@ nonscoured_secondary = orange_s
 
 soil_type_labels = c(N = "Unscoured", S = "Scoured")
 species_labels = c(ENCCAL = "Encelia californica", ARTCAL = "Artemisia california", ERIFAS = "Eriogonum fasciculatum", SALMEL = "Salvia mellifera")
+species_labels_newline = c(ENCCAL = "Encelia\ncalifornica", ARTCAL = "Artemisia\ncalifornia", ERIFAS = "Eriogonum\nfasciculatum", SALMEL = "Salvia\nmellifera")
 ```
 
 ##### Write data
+
+Functions to write data files
 
 ```{r}
 SHOULD_WRITE_FILES = T
@@ -312,7 +335,78 @@ write_table = function(model, model_name, analysis_name) {
 }
 ```
 
+##### Summarize T tests
+
+Function to summarize ttests in an exportable format.
+
+```{r}
+summarize_ttest = function (ttest_results) {
+  summary = bind_cols(
+    data = ttest_results$data,
+    t = ttest_results$statistic,
+    df = ttest_results$parameter,
+    p.value = ttest_results$p.value,
+    confidence_int_lower = ttest_results$conf.int[1],
+    confidence_int_upper = ttest_results$conf.int[2],
+    confidence_int_level = attributes(ttest_results$conf.int)$conf.level,
+    se = ttest_results$stderr,
+  )
+  summary[names(ttest_results$estimate[1])] = ttest_results$estimate[1]
+  summary[names(ttest_results$estimate[2])] = ttest_results$estimate[2]
+
+  summary
+}
+```
+
+```{r}
+
+facet_species = function(Species) {
+  facet_grid(~Species, labeller = labeller(
+    Species = species_labels_newline
+  ))
+}
+
+facet_species_theme = theme(strip.text = element_text(face = "italic"))
+
+scale_fill_soil = scale_fill_manual(
+  labels = soil_type_labels,
+  values = c(
+    N = nonscoured_primary,
+    S = scoured_primary
+  )
+)
+
+scale_x_soil = scale_x_discrete(
+  labels = soil_type_labels,
+  guide = guide_axis(angle = 60)
+)
+
+label_soil = "Soil Type"
+
+label_ec = "Electrical Conductance (dS/m)"
+
+legend_species_theme = theme(legend.text = element_text(face = "italic"))
+
+scale_color_species = scale_color_manual(
+    labels = species_labels,
+    values = c(viridis::viridis(5))
+  )
+
+```
+
+### Research Questions
+
+1.  Did shrub survival, growth, and chlorophyll content vary depending on the particular species planted, the visually-assessed soil conditions (scoured or unscoured) or the interaction between species and soil?
+
+2.  Did quantitative soil measurements vary depending on the visually-assessed soil conditions?
+
+3.  Were quantitative soil measurements significantly related to the survival, growth, or chlorophyll content of native shrubs?
+
 ### Summary
+
+#### Plant Measurements
+
+Summarize all plant measurements
 
 ```{r}
 measurements |> ggplot() + 
@@ -329,20 +423,17 @@ measurements |>
 
 ```
 
-### Soil
+#### Soil Measurements
 
 ```{r}
-
-soil |> group_by(Location, Depth)
-
-soil_matrix = as.matrix(mutate_all((soil[6:25]), as.numeric))
-rownames(soil_matrix) = paste(soil$Location, soil$Depth, soil$Lab_sample_test_num, sep='-')
-
-
-#prcomp(soil_matrix, scale = TRUE)
+soil |> ggplot() +
+  aes(x = Location, fill = Soil_type) +
+  geom_bar()
 ```
 
-### Height Change
+### Question 1: Impact of Soil Conditions on Plants
+
+#### Growth
 
 ##### Data
 
@@ -382,55 +473,10 @@ height_change_summary_table
 
 ##### Visualize
 
--   Visualize
-
 ```{r}
-# Shrub counts per species by Status and Soil Type
-height_change_shrubs |> ggplot() + 
-  aes(x = Species, fill = Species) + 
-  geom_bar() + 
-  facet_grid(`Plant_status_2024-04-30` ~ Soil) + 
-  labs(title = "Shrub count by Status and Soil Type")
-
-# Box / jitterplot per species by Status and Soil Type
-height_change_shrubs |> ggplot() + 
-  aes(x = Species, y = Height_change_cm, color = Soil) + 
-  geom_boxplot(outlier.shape = NA) + 
-  geom_point(position = position_jitterdodge(jitter.width = 0.2), alpha = 0.8) + 
-  facet_grid(~ `Plant_status_2024-04-30`)
-
-# Box / jitterplot per species for living plants by Soil type
-height_change_shrubs_alive |> ggplot() + 
-  aes(x = Species, y = Height_change_cm, color = Soil) + 
-  geom_boxplot(outlier.shape = NA) + 
-  geom_point(position = position_jitterdodge(jitter.width = 0.2), alpha = 0.8)
-
-# Normalize height change using a percentage
-height_change_shrubs_alive |> ggplot() + 
-  aes(x = Species, y = Percent_height_change, color = Soil) + 
-  geom_boxplot(outlier.shape = NA) + 
-  geom_point(position = position_jitterdodge(jitter.width = 0.2), alpha = 0.8)
-
-# Bar graph with sd and error bars
-height_change_shrubs_alive |> ggplot(
-    aes(x = Species, y = Height_change_cm, fill = Species)
-  ) + 
-  stat_summary(
-    fun = mean, 
-    geom= "col", 
-    position = "dodge"
-  ) +
-  stat_summary(
-    fun.data = mean_se, 
-    geom = "errorbar", 
-    position = position_dodge(0.9), 
-    width = 0.1
-  ) 
-
-
 # Bar graph with sd and error bars
 height_box_plot = height_change_shrubs_alive |> ggplot(
-    aes(x = Species, y = Percent_height_change, fill = Species)
+    aes(x = Soil, y = Percent_height_change, fill = Soil)
   ) + 
   stat_summary(
     fun = mean, 
@@ -443,27 +489,19 @@ height_box_plot = height_change_shrubs_alive |> ggplot(
     position = position_dodge(0.9), 
     width = 0.1
   ) + 
-  scale_fill_manual(
-    labels = species_labels,
-    values = c(viridis::viridis(5))
-  ) +
-  scale_x_discrete(
-    labels = str_replace_all(species_labels, "\\s", "\n")
-  ) +
+  facet_species(Species) +
+  facet_species_theme +
+  scale_fill_soil +
+  scale_x_soil +
   labs(
-    title = "Height by Soil Type and Species",
-    y = "Percent height change"
-  ) +
-  theme(
-    axis.text.x = element_text(face = 'italic'),
-    legend.text = element_text(face = 'italic')
-    )
+    title = "Impact of Soil Type on Plant growth per Species",
+    y = "Percent height change",
+    x = label_soil
+  )
 
 height_box_plot
 
 write_plot(height_box_plot, "box-plot", "height")
-
-# (`[[`)("station_code")
 ```
 
 ##### Models and Normality
@@ -569,9 +607,7 @@ write_table(summarize_ttest(salmel_height_ttest), "ttest-salmel", "height-percen
 salmel_height_ttest
 ```
 
-### Survival
-
-#### Species and Soil
+#### Survival
 
 model: `Survival ~ Species * Soil`
 
@@ -597,19 +633,121 @@ survival_data = measurements |>
 survival_summary_table = survival_data |> group_by(
   Soil, Species
 ) |> summarise(
-  'Survival Rate' = sum(Plant_status == 'Alive') / n(),
+  Percent_Alive = sum(Plant_status == 'Alive') / n(),
+  `Survival Rate` = sum(Plant_status == 'Alive') / n(),
+  Percent_Dead = sum(Plant_status == 'Dead') / n(),
   Count = n()
 )
 
-write_table(survival_summary_table, "summary-table", "survival")
+write_table(survival_summary_table
+            |> select(-c(Percent_Alive, Percent_Dead)), "summary-table", "survival")
 
 survival_summary_table
 ```
 
 ##### Visualize
 
+###### Survival Bar Plot
+
 ```{r}
 survival_bar_plot = survival_data |> ggplot() + 
+  aes(
+    x = Soil, 
+    fill = interaction(
+      factor(Plant_status, levels = c("Dead", "Alive")),
+      factor(Soil)
+      ),
+    ) +
+  geom_bar(position = "stack") +
+  facet_species(Species) +
+  scale_fill_manual(
+    labels = c(
+      Alive.S = "Alive (scoured)",
+      Dead.S = "Dead (scoured)",
+      Alive.N = "Alive (unscoured)",
+      Dead.N = "Dead (unscoured)"
+    ),
+    values = c(
+      Alive.S = scoured_primary, Dead.S = scoured_secondary,
+      Alive.N = nonscoured_primary, Dead.N = nonscoured_secondary
+      )
+    ) + 
+  scale_x_soil +
+  labs(
+    fill = "Soil type & Plant status",
+    x = label_soil,
+    y = "Number of Plants",
+    title = "Impact of soil type on plant survival per species"
+    ) 
+
+survival_bar_plot
+
+write_plot(
+  survival_bar_plot,
+  "bar-plot",
+  "survival"
+)
+
+
+```
+
+###### Percent Survival Bar Plot
+
+```{r}
+survival_summary_table |> 
+  pivot_longer(
+    cols = c(Percent_Alive, Percent_Dead),
+    names_to = 'Status',
+    values_to = 'Percent'
+  ) |> select(-c(`Survival Rate`)) |>
+  mutate(
+    Count = Percent * Count, 
+    Status = case_when(
+      Status == 'Percent_Alive' ~ 'Alive',
+      Status == 'Percent_Dead' ~ 'Dead'
+    )
+  )  |> 
+  ggplot() +
+  aes(x = Soil, 
+      y = Percent,
+    fill = interaction(
+      factor(Status, levels = c("Dead", "Alive")),
+      factor(Soil)
+      ),
+    ) +
+  geom_col() +
+  facet_grid(~ Species) +
+  geom_text(
+    data = survival_summary_table, 
+    aes(label = Count, x = Soil, y = 1, fill = Soil),
+    vjust = 1.5
+    ) +
+  scale_fill_manual(
+    labels = c(
+      Alive.S = "Alive (scoured)",
+      Dead.S = "Dead (scoured)",
+      Alive.N = "Alive (unscoured)",
+      Dead.N = "Dead (unscoured)"
+    ),
+    values = c(
+      Alive.S = scoured_primary, Dead.S = scoured_secondary,
+      Alive.N = nonscoured_primary, Dead.N = nonscoured_secondary
+      )
+    ) + 
+  labs(
+    fill = "Soil type & Plant status",
+    x = "Soil type",
+    y = "Percent of plants",
+    title = "Impact of soil type on percent survival per species"
+    ) +
+  scale_x_discrete(labels = soil_type_labels,
+                   guide = guide_axis(angle = 60)) -> percent_survival_plot
+
+write_plot(percent_survival_plot, "percent-col-plot", "survival")
+```
+
+```{r}
+survival_data |> ggplot() +
   aes(
     x = Soil, 
     fill = interaction(
@@ -645,8 +783,6 @@ write_plot(
   "bar-plot",
   "survival"
 )
-
-survival_bar_plot
 ```
 
 ##### Model and Normality
@@ -671,7 +807,7 @@ Looks a bit better without "ERIFAS", which we will exclude since there are only 
 Chi square test
 
 ```{r}
-survival_test = anova(soil_survival_model, test="Chisq")
+survival_test = car::Anova(soil_survival_model)
 
 write_table(survival_test, "chisq", "survival")
 
@@ -682,83 +818,25 @@ Results
 
 -   Significant(ish?) interaction between Soil and Species on survival, aka the survival of some species is more likely to be affected by soil type than others. However, take with a grain of salt as P value is `0.087`.
 
-#### Species-specific
+##### Species-specific
 
 ```{r}
-anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
+car::Anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
   Species == 'ENCCAL'
-), family = "binomial"), test = "Chisq")
+), family = "binomial"))
 
-anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
+car::Anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
   Species == 'ARTCAL'
-), family = "binomial"), test = "Chisq")
+), family = "binomial"))
 
-anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
+car::Anova(glm(Survival_index ~ Soil, data = survival_data |> filter(
   Species == 'SALMEL'
-), family = "binomial"), test = "Chisq")
+), family = "binomial"))
 
 
 ```
 
-#### Salinity
-
-##### Data
-
-```{r}
-salinity_survival = soil |> 
-  select(c(
-    Location, 
-    Depth, 
-    EC_dS_m,
-    Lab_sample_test_num
-    )) |> 
-  mutate(EC_dS_m= as.numeric(EC_dS_m)) |>
-  group_by(Location, Depth) |> 
-  summarise(
-    EC_dS_m = mean(EC_dS_m)
-  ) |> ungroup() |>
-  inner_join(
-    survival_data |> 
-      select(c(
-        shrub_id, 
-        Site, 
-        Survival_index,
-        Species
-        )),
-    by = join_by(Location == Site)
-  ) |>
-  arrange(shrub_id) |> 
-  mutate(
-    Soil_id = paste(
-      shrub_id,
-      Depth,
-      sep = "_")
-  )
-
-
-summary(glm( 
-  Survival_index ~ EC_dS_m * Depth * Species,
-  data = salinity_survival,  
-  family = binomial(link="logit") )
-  )
-```
-
-##### Visualize
-
-```{r}
-salinity_survival |> ggplot() +
-  aes(x = EC_dS_m,y=Survival_index) +
-  geom_jitter(height = 0.1) +
-  stat_smooth(method="glm", method.args=list(family="binomial"), se=FALSE)
-
-salinity_survival |> ggplot() +
-  aes(x = EC_dS_m,y=Survival_index) +
-  geom_jitter(height = 0.1) +
-  facet_grid(Depth ~ Species) +
-  stat_smooth(method="glm", method.args=list(family="binomial"), se=FALSE)
-```
-
-### Chlorophyll Content
+#### Chlorophyll Content
 
 ##### Get data
 
@@ -767,6 +845,7 @@ chlorophyll_data = measurements |>
   filter(Month == 'April') |> 
   select(c(
     shrub_id, 
+    Site,
     Soil,
     Species,
     Leaf1_Chlorophyll, 
@@ -789,7 +868,7 @@ chlorophyll_data = measurements |>
   ) 
 
  chlorophyll_data_mean = chlorophyll_data |> 
-  group_by(shrub_id, Soil, Species, Chlorophyll_Team_Notes) |> 
+  group_by(shrub_id, Soil, Species, Chlorophyll_Team_Notes, Site) |> 
    summarise(
     Mean_Chlorophyll = mean(Chlorophyll)
    ) |> ungroup()
@@ -845,8 +924,8 @@ chlorophyll_data_mean |> ggplot() +
 chlorophyll_barplot = chlorophyll_data_mean |> 
   complete(Soil, Species, fill = list(Mean_Chlorophyll = 0)) |>
   ggplot(
-    aes(x = Species, y = Mean_Chlorophyll, fill = Soil)
-  ) + 
+    aes(x = Soil, y = Mean_Chlorophyll, fill = Soil)
+  ) +
   stat_summary(
     fun = mean, 
     geom= "col", 
@@ -858,45 +937,22 @@ chlorophyll_barplot = chlorophyll_data_mean |>
     position = position_dodge(0.9), 
     width = 0.1
   ) + 
-  scale_fill_manual(values = c(N = nonscoured_primary, S = scoured_primary)) + 
+  facet_species(Species) +
+  facet_species_theme +
+  scale_fill_soil + 
+  scale_x_soil +
   labs(
+    fill = label_soil,
     title = "Impact of Soil on Chlorophyll Content per Species",
-    y = "Mean Chlorophyll Content per Plant"
+    y = "Mean Chlorophyll Content per Plant",
+    x = label_soil
   )
 
-
-
-chlorophyll_boxplot = chlorophyll_data_mean |>   
-ggplot() + 
-  aes(x = Soil, y = Mean_Chlorophyll, color = Soil, fill = Soil) + 
-  geom_boxplot(outlier.shape = NA) + 
-  geom_point(
-    shape=4,
-    position = position_jitterdodge(jitter.width = 0.3), 
-    alpha = 0.8) +
-  scale_color_manual(
-    values = c(N = nonscoured_primary, S = scoured_primary),
-    labels = soil_type_labels
-    ) +
-  scale_fill_manual(
-    values= c(N = nonscoured_secondary, S = scoured_secondary),
-    labels=soil_type_labels
-    ) + 
-  facet_grid(~Species) +
-  scale_x_discrete(
-    labels =soil_type_labels,
-    guide = guide_axis(angle = 60)
-  ) +
-  labs(
-    title = "Impact of Soil on Chlorophyll Content per Species",
-    y = "Mean Chlorophyll Content per Plant"
-  )
-
-write_plot(chlorophyll_barplot, "bar-plot", "chlorophyll")
-write_plot(chlorophyll_boxplot, "box-plot", "chlorophyll")
 
 chlorophyll_barplot
-chlorophyll_boxplot
+
+write_plot(chlorophyll_barplot, "bar-plot", "chlorophyll")
+
 ```
 
 ##### Models and Normality
@@ -954,25 +1010,25 @@ chlorophyll_data_mean |>
 ```
 
 ```{r}
-enccal_chlorophyll_model = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
+enccal_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "ENCCAL"
-)) 
+))  |> car::Anova()
 
-write_table(enccal_chlorophyll_model$coefficients, "anova-enccal", "chlorophyll")
+write_table(enccal_chlorophyll, "anova-enccal", "chlorophyll")
 
-enccal_chlorophyll_model
+enccal_chlorophyll
 
 artcal_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "ARTCAL"
-)) |> summary()
+)) |> car::Anova()
 
 artcal_chlorophyll
 
-write_table(artcal_chlorophyll$coefficients, "anova-artcal", "chlorophyll")
+write_table(artcal_chlorophyll, "anova-artcal", "chlorophyll")
 
 salmel_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |> filter(
   Species == "SALMEL"
-)) |> summary()
+)) |> car::Anova()
 
 salmel_chlorophyll
 
@@ -982,25 +1038,6 @@ write_table(salmel_chlorophyll$coefficients, "anova-salmel", "chlorophyll")
 ```
 
 ##### T-tests
-
-```{r}
-summarize_ttest = function (ttest_results) {
-  summary = bind_cols(
-    data = ttest_results$data,
-    t = ttest_results$statistic,
-    df = ttest_results$parameter,
-    p.value = ttest_results$p.value,
-    confidence_int_lower = ttest_results$conf.int[1],
-    confidence_int_upper = ttest_results$conf.int[2],
-    confidence_int_level = attributes(ttest_results$conf.int)$conf.level,
-    se = ttest_results$stderr,
-  )
-  summary[names(ttest_results$estimate[1])] = ttest_results$estimate[1]
-  summary[names(ttest_results$estimate[2])] = ttest_results$estimate[2]
-
-  summary
-}
-```
 
 ```{r}
 
@@ -1024,4 +1061,277 @@ write_table(summarize_ttest(salmel_chlorophyll_ttest), "ttest-salmel", "chloroph
 
 salmel_chlorophyll_ttest
 
+```
+
+### Question 2: Soil Conditions and Quantitative Measurements
+
+#### Salinity T-test
+
+##### Visualize
+
+```{r}
+soil |> ggplot() +
+  aes(x = Soil_type, EC_dS_m, fill = Soil_type, color = Soil_type) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.3, height = 0, shape = 4) +
+  scale_color_manual(
+    values = c(
+      "N" = nonscoured_primary,
+      "S" = scoured_primary
+    )
+  ) +
+  scale_fill_manual(
+    values = c(
+      N = nonscoured_secondary,
+      S = scoured_secondary
+    )
+  )
+```
+
+```{r}
+soil_salinity_by_type_plot =
+  soil |> ggplot() +
+  aes(x = Soil_type, y = EC_dS_m, fill = Soil_type) +
+  stat_summary(
+    fun = mean, 
+    geom= "col", 
+    position = "dodge"
+  ) +
+  stat_summary(
+    fun.data = mean_se, 
+    geom = "errorbar", 
+    position = position_dodge(0.9), 
+    width = 0.1
+  ) +
+  #geom_jitter(width = 0.3, height = 0, shape = 4) +
+  scale_fill_soil +
+    labs(
+      title = 'Salinity (measured as Electrical Conductance) by Soil Type',
+      y = "Electrical Conductance (dS/m)",
+      x = "Soil type",
+      fill = label_soil
+    ) +
+    scale_x_discrete(
+      labels = soil_type_labels
+    )
+  
+soil_salinity_by_type_plot
+
+write_plot(soil_salinity_by_type_plot, "box-plot-salinity-by-type", "soil")
+
+
+```
+
+```{r}
+
+soil_type_salinity_ttest = t.test(EC_dS_m ~ Soil_type, data = soil)
+
+write_table(summarize_ttest(soil_type_salinity_ttest), "ttest-salinity-by-type", "soil")
+
+soil_type_salinity_ttest
+```
+
+#### Multivariate Analysis?
+
+```{r}
+
+soil_matrix = as.matrix(mutate_all((soil[6:25]), as.numeric))
+rownames(soil_matrix) = paste(soil$Location, soil$Depth, soil$Lab_sample_test_num, sep='-')
+
+
+#relationship between salinity and scoured?
+soil_matrix
+
+# nmds = metaMDS(soil_matrix, distance = "bray", k = 2, autotransform=FALSE, noshare = FALSE)
+
+
+#prcomp(soil_matrix, scale = TRUE)
+```
+
+### Question 3: Impact of Quantitative Soil Metrics on Plants
+
+-   Specifically, salinity
+
+#### Survival
+
+Use one salinity value per location to match to shrubs. Take the average of salinity at a shallow depth.
+
+```{r}
+soil_salinity = soil |> 
+  select(c(
+    Location, 
+    Depth, 
+    EC_dS_m,
+    Lab_sample_test_num
+    )) |> 
+  mutate(EC_dS_m= as.numeric(EC_dS_m)) |>
+  group_by(Location, Depth) |> 
+  summarise(
+    EC_dS_m = mean(EC_dS_m)
+  ) |> ungroup() |>
+  filter(Depth != 'DEEP')
+```
+
+##### Data
+
+```{r}
+salinity_survival = soil_salinity |>
+  inner_join(
+    survival_data |> 
+      select(c(
+        shrub_id, 
+        Site, 
+        Survival_index,
+        Species
+        )),
+    by = join_by(Location == Site)
+  ) |>
+  arrange(shrub_id) |> 
+  mutate(
+    Soil_id = paste(
+      shrub_id,
+      Depth,
+      sep = "_")
+  )
+```
+
+##### Visualize
+
+```{r}
+salinity_survival_plot = salinity_survival |> ggplot() +
+  aes(x = EC_dS_m,y=Survival_index ,color = Species) +
+  geom_jitter(height = 0.09, width = 5, shape = 4) +
+  stat_smooth(method="glm", method.args=list(family="binomial"), se=FALSE) +
+  scale_color_species + 
+  legend_species_theme +
+  scale_y_continuous(
+    breaks = c(0, 0.5, 1)
+  ) + 
+  labs(
+    title = "Impact of Salinity (measured as Electrical Conductance) on \nSurvival per Species",
+    x = label_ec,
+    y = "Survival"
+  )
+
+salinity_survival_plot
+
+write_plot(salinity_survival_plot, "scatter-plot", "survival-salinity")
+```
+
+##### Tests
+
+```{r}
+
+survival_salinity_anova = car::Anova(glm( 
+  Survival_index ~ EC_dS_m * Species,
+  data = salinity_survival,  
+  family = binomial(link="logit"))
+  )
+
+summary(glm( 
+  Survival_index ~ EC_dS_m * Species,
+  data = salinity_survival,  
+  family = binomial(link="logit"))
+  )
+car::Anova(glm( 
+  Survival_index ~ EC_dS_m * Species,
+  data = salinity_survival,  
+  family = binomial(link="logit"))
+  )
+
+write_table(survival_salinity_anova, "anova-table", "survival-salinity")
+
+survival_salinity_anova
+```
+
+#### Growth
+
+##### Data
+
+```{r}
+salinity_growth_data = height_change_shrubs_alive |> inner_join(
+  soil_salinity, by=join_by(Site == Location)
+)
+
+salinity_growth_data |> 
+  filter(Percent_height_change < 2) |> 
+  (`[[`)("Percent_height_change") |> shapiro.test()
+```
+
+##### Visualize
+
+```{r}
+salinity_growth_data |> filter(Percent_height_change < 2)|> ggplot() + 
+  aes(x = EC_dS_m, y = Percent_height_change, color = Species) +
+  geom_jitter(height = 0, width = 4, shape = 4) +
+  stat_smooth(method="lm", se=FALSE) +
+  scale_color_manual(values = viridis::viridis(5)) + 
+  scale_color_species +
+  legend_species_theme +
+  labs(
+    x = label_ec
+  )
+  
+```
+
+##### Tests
+
+```{r}
+growth_salinity_model = 
+  lm(Percent_height_change ~ EC_dS_m * Species, data = salinity_growth_data 
+     |> filter(Percent_height_change < 2)
+     ) 
+
+plot(growth_salinity_model)
+
+growth_salinity_anova = car::Anova(growth_salinity_model)
+
+write_table(growth_salinity_anova, "anova-table", "height-salinity")
+
+growth_salinity_anova
+```
+
+#### Chlorophyll
+
+##### Data
+
+```{r}
+chlorophyll_soil_data = chlorophyll_data_mean |> 
+  inner_join(
+    soil_salinity, by=join_by(Site == Location)
+  )
+```
+
+##### Visualize
+
+```{r}
+chlorophyll_salinity_plot = chlorophyll_soil_data |> ggplot() + 
+  aes(x = EC_dS_m, y = Mean_Chlorophyll, color = Species) +
+  geom_jitter(height = 0, width = 4, shape = 4) +
+  stat_smooth(method="lm", se=FALSE) +
+  scale_color_species +
+  legend_species_theme +
+  labs(
+    x = label_ec,
+    y = "Mean Chlorophyll per Plant",
+    title = "Impact of Salinity on Chlorophyll Content per Species"
+  )
+
+chlorophyll_salinity_plot
+
+write_plot(chlorophyll_salinity_plot, "scatter-plot", "chlorophyll-salinity")
+
+
+```
+
+##### Linear regression
+
+```{r}
+chlorophyll_salinity_model = lm(Mean_Chlorophyll ~ EC_dS_m * Species, data = chlorophyll_soil_data) 
+  
+chlorophyll_salinity_anova = car::Anova(chlorophyll_salinity_model) 
+ 
+write_table(chlorophyll_salinity_anova, "anova-table", "chlorophyll-salinity") 
+
+chlorophyll_salinity_anova
 ```
