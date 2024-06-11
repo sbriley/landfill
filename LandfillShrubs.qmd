@@ -242,6 +242,11 @@ shrubs = measurements |>
     Height_change_cm = `Height_cm_2024-04-30` - `Height_cm_2024-03-01`
   ) |> mutate(
     Percent_height_change = Height_change_cm / `Height_cm_2024-03-01`
+  ) |> mutate(
+    `Plant_status_2024-04-30` = case_when(
+      is.na(`Plant_status_2024-04-30`) & `Plant_status_2024-03-01` == 'Dead' ~ 'Dead',
+      .default = `Plant_status_2024-04-30`
+    )
   )
 ```
 
@@ -318,8 +323,8 @@ Functions to write data files
 
 ```{r}
 SHOULD_WRITE_FILES = T
-FIGURE_WIDTH = 7
-FIGURE_HEIGHT = 4.5
+FIGURE_WIDTH = 6.09
+FIGURE_HEIGHT = 3.91
 OUTPUT_FILE_PATH = "./landfill-output/"
 
 write_plot = function(output, plot_name, analysis_name) {
@@ -381,7 +386,7 @@ scale_x_soil = scale_x_discrete(
   guide = guide_axis(angle = 60)
 )
 
-label_soil = "Soil Type"
+label_soil = "Soil Conditions"
 
 label_ec = "Electrical Conductance (dS/m)"
 
@@ -450,7 +455,8 @@ height_change_shrubs = shrubs |>
 
 # shrubs with measurements at both sampling times, that are alive 
 height_change_shrubs_alive = height_change_shrubs |>
-  filter(`Plant_status_2024-04-30` == "Alive")
+  filter(`Plant_status_2024-04-30` == "Alive") 
+  #filter(Percent_height_change < 3)
 ```
 
 ##### Summarize
@@ -474,6 +480,13 @@ height_change_summary_table
 ##### Visualize
 
 ```{r}
+height_change_shrubs_alive |> 
+  ggplot() +
+  aes(x = Percent_height_change) +
+  geom_histogram()
+```
+
+```{r}
 # Bar graph with sd and error bars
 height_box_plot = height_change_shrubs_alive |> ggplot(
     aes(x = Soil, y = Percent_height_change, fill = Soil)
@@ -489,14 +502,16 @@ height_box_plot = height_change_shrubs_alive |> ggplot(
     position = position_dodge(0.9), 
     width = 0.1
   ) + 
+    geom_jitter(width = 0.2, height = 0, shape = 4) +
   facet_species(Species) +
   facet_species_theme +
   scale_fill_soil +
   scale_x_soil +
   labs(
-    title = "Impact of Soil Type on Plant growth per Species",
+    title = "Impact of Soil Conditions on Plant Growth per Species",
     y = "Percent height change",
-    x = label_soil
+    x = label_soil,
+    fill = label_soil
   )
 
 height_box_plot
@@ -507,9 +522,17 @@ write_plot(height_box_plot, "box-plot", "height")
 ##### Models and Normality
 
 ```{r}
-height_change_shrubs_alive |> ggplot() +
-  aes(x = Height_change_cm) +
-  geom_histogram()
+height_change_shrubs_alive |> filter(Percent_height_change < 3) |> ggplot() +
+  aes(x = Percent_height_change, fill = Species) +
+  geom_histogram(binwidth = .1) 
+
+x = shapiro.test(height_change_shrubs_alive$Percent_height_change)
+
+height_change_shrubs_alive |> filter(Species != "ERIFAS")|> group_by(
+  Species
+) |> summarise(
+  p = shapiro.test(Percent_height_change)$p.value
+)
 
 height_model_interactions = 
   glm(Height_change_cm ~ Species * Soil, data = height_change_shrubs_alive)
@@ -555,11 +578,15 @@ summary(percent_height_model_soil)
 ###### Location as random effect?
 
 ```{r}
-summary(lmer(Percent_height_change ~ Soil * Species + (1|Site_numeric_id), data = height_change_shrubs_alive |> mutate(
+anova_height = car::Anova(lmer(Percent_height_change ~ Soil * Species + (1|Site_numeric_id), data = height_change_shrubs_alive |> mutate(
   Site_id = as.numeric(
     factor(Site, levels=unique(Site))
     )
   )))
+
+write_table(anova_height, "anova-table", "height")
+
+
 ```
 
 ##### T-tests
@@ -614,9 +641,18 @@ model: `Survival ~ Species * Soil`
 ##### Data
 
 ```{r}
-survival_data = measurements |> 
+survival_data_all = shrubs |> 
+  select(c(shrub_id, `Plant_status_2024-04-30`, Soil, Species, `Notes_2024-04-30`, Site)) |> 
+  rename(
+    Plant_status = `Plant_status_2024-04-30`,
+    Notes = `Notes_2024-04-30`
+  )
+
+survival_data_april = measurements |> 
   filter(Month == 'April') |> 
-  select(c(shrub_id, Plant_status, Soil, Species, Notes, Site)) |>
+  select(c(shrub_id, Plant_status, Soil, Species, Notes, Site))
+  
+survival_data = survival_data_all |>
   mutate(
     Survival_index = case_when(
       Plant_status == 'Alive' ~ 1, 
@@ -636,6 +672,11 @@ survival_summary_table = survival_data |> group_by(
   Percent_Alive = sum(Plant_status == 'Alive') / n(),
   `Survival Rate` = sum(Plant_status == 'Alive') / n(),
   Percent_Dead = sum(Plant_status == 'Dead') / n(),
+  Count = n()
+)
+
+survival_data |> summarise(
+  plants_alive = sum(Plant_status == 'Alive'),
   Count = n()
 )
 
@@ -674,10 +715,10 @@ survival_bar_plot = survival_data |> ggplot() +
     ) + 
   scale_x_soil +
   labs(
-    fill = "Soil type & Plant status",
+    fill = "Soil Conditions & \nPlant Status",
     x = label_soil,
     y = "Number of Plants",
-    title = "Impact of soil type on plant survival per species"
+    title = "Impact of Soil Conditions on Plant Survival per Species"
     ) 
 
 survival_bar_plot
@@ -716,7 +757,8 @@ survival_summary_table |>
       ),
     ) +
   geom_col() +
-  facet_grid(~ Species) +
+  facet_species(Species) +
+  facet_species_theme +
   geom_text(
     data = survival_summary_table, 
     aes(label = Count, x = Soil, y = 1, fill = Soil),
@@ -735,15 +777,17 @@ survival_summary_table |>
       )
     ) + 
   labs(
-    fill = "Soil type & Plant status",
-    x = "Soil type",
+    fill = "Soil Conditions & \nPlant Status",
+    x = label_soil,
     y = "Percent of plants",
-    title = "Impact of soil type on percent survival per species"
+    title = "Impact of Soil Conditions on Percent Survival per Species"
     ) +
   scale_x_discrete(labels = soil_type_labels,
                    guide = guide_axis(angle = 60)) -> percent_survival_plot
 
 write_plot(percent_survival_plot, "percent-col-plot", "survival")
+
+percent_survival_plot
 ```
 
 ```{r}
@@ -770,10 +814,10 @@ survival_data |> ggplot() +
       )
     ) + 
   labs(
-    fill = "Soil type & Plant status",
-    x = "Soil type",
+    fill = "Soil Conditions & Plant status",
+    x = label_soil,
     y = "Number of Plants",
-    title = "Impact of soil type on plant survival per species"
+    title = "Impact of Soil Conditions on Plant Survival per Species"
     ) +
   scale_x_discrete(labels = soil_type_labels,
                    guide = guide_axis(angle = 60))
@@ -895,8 +939,8 @@ chlorophyll_data_summary_plot = chlorophyll_data_mean |> ggplot() +
   geom_bar(position = 'dodge') + 
   facet_grid(~Species) + 
   labs(
-    title = "Total number of living plants with Chlorophyll measurements per soil type",
-    x = "Soil Type",
+    title = "Total number of living plants with Chlorophyll measurements per soil condition",
+    x = label_soil,
     y = "Number of Plants"
   ) +
   scale_fill_manual(
@@ -943,7 +987,7 @@ chlorophyll_barplot = chlorophyll_data_mean |>
   scale_x_soil +
   labs(
     fill = label_soil,
-    title = "Impact of Soil on Chlorophyll Content per Species",
+    title = "Impact of Soil Condition on Chlorophyll Content per Species",
     y = "Mean Chlorophyll Content per Plant",
     x = label_soil
   )
@@ -977,12 +1021,12 @@ model1 = lmer(Chlorophyll ~ Soil * Species + (1|shrub_id), data = chlorophyll_da
 AIC(chlorophyll_with_interactions)
 AIC(model1)
 
-chlorophyll_test = summary(chlorophyll_with_interactions)
+chlorophyll_test = car::Anova(chlorophyll_with_interactions)
 
 # AIC is much worse for this one even though the results are similar
 summary(model1) 
 
-write_table(chlorophyll_test$coefficients, "anova", "chlorophyll")
+write_table(chlorophyll_test, "anova", "chlorophyll")
 
 chlorophyll_test
 chlorophyll_test$coefficients
@@ -1032,7 +1076,7 @@ salmel_chlorophyll = glm(Mean_Chlorophyll ~ Soil, data = chlorophyll_data_mean |
 
 salmel_chlorophyll
 
-write_table(salmel_chlorophyll$coefficients, "anova-salmel", "chlorophyll")
+write_table(salmel_chlorophyll, "anova-salmel", "chlorophyll")
 
 
 ```
@@ -1066,6 +1110,19 @@ salmel_chlorophyll_ttest
 ### Question 2: Soil Conditions and Quantitative Measurements
 
 #### Salinity T-test
+
+##### Summarize
+
+```{r}
+soil_data_summary_table = soil |> group_by(Soil_type) |> summarise(
+  `Mean EC` = mean(EC_dS_m),
+  Count = n(),
+  sd = sd(EC_dS_m),
+  se = sd(EC_dS_m)/sqrt(n())
+)
+
+write_table(soil_data_summary_table, "salinity-summary-table","soil")
+```
 
 ##### Visualize
 
@@ -1103,12 +1160,12 @@ soil_salinity_by_type_plot =
     position = position_dodge(0.9), 
     width = 0.1
   ) +
-  #geom_jitter(width = 0.3, height = 0, shape = 4) +
+  geom_jitter(width = 0.2, height = 0, shape = 4) +
   scale_fill_soil +
     labs(
-      title = 'Salinity (measured as Electrical Conductance) by Soil Type',
+      title = 'Salinity (measured as Electrical Conductance) by Soil Conditions',
       y = "Electrical Conductance (dS/m)",
-      x = "Soil type",
+      x = label_soil,
       fill = label_soil
     ) +
     scale_x_discrete(
@@ -1208,7 +1265,7 @@ salinity_survival_plot = salinity_survival |> ggplot() +
     breaks = c(0, 0.5, 1)
   ) + 
   labs(
-    title = "Impact of Salinity (measured as Electrical Conductance) on \nSurvival per Species",
+    title = "Impact of Soil Salinity (measured as Electrical Conductance) on \nSurvival per Species",
     x = label_ec,
     y = "Survival"
   )
@@ -1221,27 +1278,15 @@ write_plot(salinity_survival_plot, "scatter-plot", "survival-salinity")
 ##### Tests
 
 ```{r}
+# survival_salinity_model = lm( 
+#   Survival_index ~ EC_dS_m * Species,
+#   data = salinity_survival,  
+#   family = binomial(link="logit"))
 
-survival_salinity_anova = car::Anova(glm( 
-  Survival_index ~ EC_dS_m * Species,
-  data = salinity_survival,  
-  family = binomial(link="logit"))
-  )
+summary(glm(Survival_index ~ EC_dS_m, data = salinity_survival, family = binomial (link="logit")))
 
-summary(glm( 
-  Survival_index ~ EC_dS_m * Species,
-  data = salinity_survival,  
-  family = binomial(link="logit"))
-  )
-car::Anova(glm( 
-  Survival_index ~ EC_dS_m * Species,
-  data = salinity_survival,  
-  family = binomial(link="logit"))
-  )
+# Wald Test?
 
-write_table(survival_salinity_anova, "anova-table", "survival-salinity")
-
-survival_salinity_anova
 ```
 
 #### Growth
@@ -1261,7 +1306,8 @@ salinity_growth_data |>
 ##### Visualize
 
 ```{r}
-salinity_growth_data |> filter(Percent_height_change < 2)|> ggplot() + 
+height_change_salinity_plot = salinity_growth_data |>
+  ggplot() + 
   aes(x = EC_dS_m, y = Percent_height_change, color = Species) +
   geom_jitter(height = 0, width = 4, shape = 4) +
   stat_smooth(method="lm", se=FALSE) +
@@ -1271,24 +1317,47 @@ salinity_growth_data |> filter(Percent_height_change < 2)|> ggplot() +
   labs(
     x = label_ec
   )
+
+height_change_salinity_plot
+
+write_plot(height_change_salinity_plot, "scatter-plot", "height-salinity")
   
 ```
 
 ##### Tests
 
 ```{r}
-growth_salinity_model = 
+growth_salinity_model_overall = 
+  lm(Percent_height_change ~ EC_dS_m, data = salinity_growth_data 
+     |> filter(Percent_height_change < 2)
+     ) 
+
+growth_salinity_model_with_interactions = 
   lm(Percent_height_change ~ EC_dS_m * Species, data = salinity_growth_data 
      |> filter(Percent_height_change < 2)
      ) 
 
-plot(growth_salinity_model)
+summary(growth_salinity_model_overall)
 
-growth_salinity_anova = car::Anova(growth_salinity_model)
+summary(growth_salinity_model_with_interactions)
 
-write_table(growth_salinity_anova, "anova-table", "height-salinity")
+growth_salinity_model_artcal = lm(Percent_height_change ~ EC_dS_m, data = salinity_growth_data 
+     |> filter(Percent_height_change < 2) |> filter(Species == 'ARTCAL')
+     )
+summary(growth_salinity_model_artcal)
 
-growth_salinity_anova
+growth_salinity_model_enccal = lm(Percent_height_change ~ EC_dS_m, data = salinity_growth_data 
+     |> filter(Percent_height_change < 2) |> filter(Species == 'ENCCAL')
+     )
+summary(growth_salinity_model_enccal)
+
+
+growth_salinity_model_salmel = lm(Percent_height_change ~ EC_dS_m, data = salinity_growth_data 
+     |> filter(Percent_height_change < 2) |> filter(Species == 'SALMEL')
+     )
+summary(growth_salinity_model_salmel)
+
+
 ```
 
 #### Chlorophyll
@@ -1314,7 +1383,7 @@ chlorophyll_salinity_plot = chlorophyll_soil_data |> ggplot() +
   labs(
     x = label_ec,
     y = "Mean Chlorophyll per Plant",
-    title = "Impact of Salinity on Chlorophyll Content per Species"
+    title = "Impact of Soil Salinity (measured as Electrical Conductance) on \nChlorophyll Content per Species"
   )
 
 chlorophyll_salinity_plot
@@ -1327,11 +1396,40 @@ write_plot(chlorophyll_salinity_plot, "scatter-plot", "chlorophyll-salinity")
 ##### Linear regression
 
 ```{r}
-chlorophyll_salinity_model = lm(Mean_Chlorophyll ~ EC_dS_m * Species, data = chlorophyll_soil_data) 
-  
-chlorophyll_salinity_anova = car::Anova(chlorophyll_salinity_model) 
- 
-write_table(chlorophyll_salinity_anova, "anova-table", "chlorophyll-salinity") 
+# chlorophyll_salinity_model = lm(Mean_Chlorophyll ~ EC_dS_m * Species, data = chlorophyll_soil_data) 
+#   
+# summary(chlorophyll_salinity_model)
+# chlorophyll_salinity_anova = car::Anova(chlorophyll_salinity_model) 
+#  
+# write_table(chlorophyll_salinity_anova, "anova-table", "chlorophyll-salinity") 
+# 
+# chlorophyll_salinity_anova
 
-chlorophyll_salinity_anova
+chlorophyll_salinity_model_overall = 
+  lm(Mean_Chlorophyll ~ EC_dS_m, data = chlorophyll_soil_data 
+     ) 
+
+chlorophyll_salinity_model_with_interactions = 
+  lm(Mean_Chlorophyll ~ EC_dS_m * Species, data = chlorophyll_soil_data
+     ) 
+
+summary(chlorophyll_salinity_model_overall)
+
+summary(chlorophyll_salinity_model_with_interactions)
+
+chlorophyll_salinity_model_artcal = lm(Mean_Chlorophyll ~ EC_dS_m, data = chlorophyll_soil_data 
+     |> filter(Species == 'ARTCAL')
+     )
+summary(chlorophyll_salinity_model_artcal)
+
+chlorophyll_salinity_model_enccal = lm(Mean_Chlorophyll ~ EC_dS_m, data = chlorophyll_soil_data 
+     |> filter(Species == 'ENCCAL')
+     )
+summary(chlorophyll_salinity_model_enccal)
+
+
+chlorophyll_salinity_model_salmel = lm(Mean_Chlorophyll ~ EC_dS_m, data = chlorophyll_soil_data 
+      |> filter(Species == 'SALMEL')
+     )
+summary(chlorophyll_salinity_model_salmel)
 ```
